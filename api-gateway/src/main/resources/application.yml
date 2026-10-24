@@ -1,0 +1,41 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 5s
+      routes:
+        - id: auth-service
+          uri: http://localhost:8081
+          predicates:
+            - Path=/auth/**
+        - id: order-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/orders/**
+
+jwt:
+  secret: ${JWT_SECRET:orderflow-super-secret-key-2026-must-be-at-least-256-bits-long}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: gateway
+        url: /v3/api-docs
+      - name: auth-service
+        url: /auth/v3/api-docs
+      - name: order-service
+        url: /orders/v3/api-docs
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.orderflow.gateway: INFO

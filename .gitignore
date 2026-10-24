@@ -1,0 +1,17 @@
+.env
+target/
+*.class
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.iml
+.mvn/
+!.mvn/wrapper/maven-wrapper.jar
+HELP.md
+build/
+out/
+node_modules/
+dist/
+.claude/
+CLAUDE.md

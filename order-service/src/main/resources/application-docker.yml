@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql-order:3306/order_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+  kafka:
+    bootstrap-servers: kafka:29092

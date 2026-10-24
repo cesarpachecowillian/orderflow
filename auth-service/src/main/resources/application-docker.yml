@@ -1,0 +1,3 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql-auth:3306/auth_db?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
