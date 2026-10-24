@@ -76,44 +76,9 @@ echo "$NAMES" | while IFS='|' read -r NAME EMAIL; do
   fi
 done
 
-# ---------- catálogo de produtos para sortear ----------
-# product|price|category
-PRODUCTS="Notebook Dell XPS|7800.00
-Notebook Lenovo ThinkPad|6500.00
-Macbook Air M2|9200.00
-Mouse Logitech MX Master|420.00
-Mouse Razer DeathAdder|290.00
-Teclado Mecânico Keychron|650.00
-Teclado Logitech MX Keys|780.00
-Webcam Full HD Logitech|350.00
-Webcam 4K Razer|890.00
-Monitor 27pol 4K|2400.00
-Monitor Ultrawide 34pol|3200.00
-Cadeira Gamer DT3|1850.00
-Cadeira ergonômica Flexform|2400.00
-Mousepad XL|120.00
-Headset HyperX Cloud|680.00
-Headset Sony WH-1000XM5|2900.00
-SSD NVMe 1TB|650.00
-SSD NVMe 2TB|1290.00
-Memória DDR4 32GB|890.00
-Memória DDR5 64GB|1750.00
-Placa de Vídeo RTX 4070|4200.00
-Placa de Vídeo RTX 4080|7800.00
-Microfone Condensador HyperX|1100.00
-Interface de Áudio Focusrite|890.00
-Mesa Digitalizadora Wacom|1450.00
-Smartphone Galaxy S24|4900.00
-Tablet iPad Air|5400.00
-Smartwatch Apple Watch|3200.00
-Câmera Canon EOS R50|6900.00
-Drone DJI Mini 4|4500.00
-Roteador Wi-Fi 6 Asus|890.00
-Switch Gigabit 8 portas|320.00
-Cabo HDMI 2.1 (3m)|85.00
-Hub USB-C 7-em-1|450.00
-Suporte Articulado 2 monitores|550.00
-Iluminação Ring Light|320.00"
+# ---------- catálogo: produtos têm preço definido no servidor (ids 1..12 em order-init.sql) ----------
+# O cliente envia apenas productId + quantity.
+PRODUCT_COUNT=12
 
 # ---------- gera pedidos: cada usuário ganha 1-4 pedidos com 1-3 itens ----------
 echo
@@ -134,13 +99,10 @@ echo "$NAMES" | while IFS='|' read -r NAME EMAIL; do
     item=0
     while [ $item -lt $M ]; do
       item=$((item+1))
-      idx=$(( (i * 11 + pedido * 5 + item * 3) % 36 + 1 ))
-      P=$(echo "$PRODUCTS" | sed -n "${idx}p")
-      PRODUCT=$(echo "$P" | cut -d'|' -f1)
-      PRICE=$(echo "$P" | cut -d'|' -f2)
+      PRODUCT_ID=$(( (i * 11 + pedido * 5 + item * 3) % PRODUCT_COUNT + 1 ))
       QTY=$(( (item + pedido) % 3 + 1 ))
       [ -n "$items_json" ] && items_json="$items_json,"
-      items_json="$items_json{\"productName\":\"$PRODUCT\",\"quantity\":$QTY,\"unitPrice\":$PRICE}"
+      items_json="$items_json{\"productId\":$PRODUCT_ID,\"quantity\":$QTY}"
     done
     payload="{\"items\":[$items_json]}"
     OID=$(new_order "$EMAIL" "$payload")

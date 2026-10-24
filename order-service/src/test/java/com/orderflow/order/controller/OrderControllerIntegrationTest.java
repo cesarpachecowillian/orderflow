@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.order.dto.CreateOrderItemRequest;
 import com.orderflow.order.dto.CreateOrderRequest;
 import com.orderflow.order.dto.OrderEventDTO;
+import com.orderflow.order.entity.Product;
+import com.orderflow.order.repository.ProductRepository;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -43,6 +46,11 @@ class OrderControllerIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired EmbeddedKafkaBroker broker;
+    @Autowired ProductRepository productRepository;
+
+    static Long monitorId;
+    static Long mouseId;
+    static Long inactiveId;
 
     static Consumer<String, OrderEventDTO> consumer;
 
@@ -63,9 +71,19 @@ class OrderControllerIntegrationTest {
         if (consumer != null) consumer.close();
     }
 
+    @BeforeEach
+    void seedCatalog() {
+        if (monitorId != null) return;
+        monitorId = productRepository.save(new Product("Monitor Teste", new BigDecimal("1200.00"))).getId();
+        mouseId = productRepository.save(new Product("Mouse Teste", new BigDecimal("549.90"))).getId();
+        Product inactive = new Product("Descontinuado Teste", new BigDecimal("10.00"));
+        inactive.setActive(false);
+        inactiveId = productRepository.save(inactive).getId();
+    }
+
     private String createOrderJson() throws Exception {
         return json.writeValueAsString(new CreateOrderRequest(List.of(
-                new CreateOrderItemRequest("Monitor", 1, new BigDecimal("1200.00"))
+                new CreateOrderItemRequest(monitorId, 1)
         )));
     }
 
@@ -267,5 +285,92 @@ class OrderControllerIntegrationTest {
                         .header("X-User-Role", "ADMIN")
                         .header("X-User-Email", "admin@e.com"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @Order(9)
+    void create_priceIsCalculatedByServer_fromCatalog() throws Exception {
+        String body = "{\"items\":[{\"productId\":" + mouseId + ",\"quantity\":2}]}";
+
+        mvc.perform(post("/orders")
+                        .header("X-User-Name", "César")
+                        .header("X-User-Email", "cesar@email.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.totalAmount").value(1099.80))
+                .andExpect(jsonPath("$.items[0].productId").value(mouseId))
+                .andExpect(jsonPath("$.items[0].productName").value("Mouse Teste"))
+                .andExpect(jsonPath("$.items[0].unitPrice").value(549.90))
+                .andExpect(jsonPath("$.items[0].subtotal").value(1099.80));
+
+        KafkaTestUtils.getSingleRecord(consumer, "order-events", Duration.ofSeconds(10));
+    }
+
+    @Test
+    @Order(9)
+    void create_clientSentUnitPrice_isIgnored() throws Exception {
+        String body = "{\"items\":[{\"productId\":" + monitorId + ",\"quantity\":1,\"unitPrice\":0.01}]}";
+
+        mvc.perform(post("/orders")
+                        .header("X-User-Name", "César")
+                        .header("X-User-Email", "cesar@email.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.totalAmount").value(1200.00))
+                .andExpect(jsonPath("$.items[0].unitPrice").value(1200.00));
+
+        KafkaTestUtils.getSingleRecord(consumer, "order-events", Duration.ofSeconds(10));
+    }
+
+    @Test
+    @Order(9)
+    void create_unknownProduct_returns400WithMessage() throws Exception {
+        mvc.perform(post("/orders")
+                        .header("X-User-Name", "César")
+                        .header("X-User-Email", "cesar@email.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":999999,\"quantity\":1}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Produto não encontrado ou indisponível: 999999"));
+    }
+
+    @Test
+    @Order(9)
+    void create_inactiveProduct_returns400() throws Exception {
+        mvc.perform(post("/orders")
+                        .header("X-User-Name", "César")
+                        .header("X-User-Email", "cesar@email.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + inactiveId + ",\"quantity\":1}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Produto não encontrado ou indisponível: " + inactiveId));
+    }
+
+    @Test
+    @Order(9)
+    void create_quantityZero_returns400() throws Exception {
+        mvc.perform(post("/orders")
+                        .header("X-User-Name", "César")
+                        .header("X-User-Email", "cesar@email.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + monitorId + ",\"quantity\":0}]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @Order(9)
+    void listProducts_returnsOnlyActive_sortedByName() throws Exception {
+        mvc.perform(get("/products")
+                        .header("X-User-Role", "USER")
+                        .header("X-User-Email", "cesar@email.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(monitorId))
+                .andExpect(jsonPath("$[0].name").value("Monitor Teste"))
+                .andExpect(jsonPath("$[0].price").value(1200.00))
+                .andExpect(jsonPath("$[1].name").value("Mouse Teste"))
+                .andExpect(jsonPath("$[1].price").value(549.90));
     }
 }

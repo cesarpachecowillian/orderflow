@@ -16,8 +16,15 @@ export interface UserResponse {
   createdAt: string
 }
 
+export interface Product {
+  id: number
+  name: string
+  price: number
+}
+
 export interface OrderItem {
   id: number
+  productId: number
   productName: string
   quantity: number
   unitPrice: number
@@ -92,9 +99,8 @@ export interface Page<T> {
 }
 
 export interface CreateOrderItemRequest {
-  productName: string
+  productId: number
   quantity: number
-  unitPrice: number
 }
 
 export interface CreateOrderRequest {

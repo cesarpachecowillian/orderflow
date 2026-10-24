@@ -1,9 +1,9 @@
 package com.orderflow.order.mapper;
 
-import com.orderflow.order.dto.CreateOrderItemRequest;
 import com.orderflow.order.dto.OrderResponse;
 import com.orderflow.order.entity.Order;
 import com.orderflow.order.entity.OrderItem;
+import com.orderflow.order.entity.Product;
 import com.orderflow.order.entity.OrderStatus;
 import org.junit.jupiter.api.Test;
 
@@ -16,20 +16,24 @@ class OrderMapperTest {
     private final OrderMapper mapper = new OrderMapper();
 
     @Test
-    void toEntity_fromRequest() {
-        var req = new CreateOrderItemRequest("Mouse", 2, new BigDecimal("99.90"));
-        OrderItem item = mapper.toEntity(req);
-        assertThat(item.getProductName()).isEqualTo("Mouse");
+    void toEntity_usesNameAndPriceFromProduct() {
+        Product product = new Product("Mouse Logitech MX Master 3S", new BigDecimal("549.90"));
+        product.setId(2L);
+
+        OrderItem item = mapper.toEntity(product, 2);
+
+        assertThat(item.getProductId()).isEqualTo(2L);
+        assertThat(item.getProductName()).isEqualTo("Mouse Logitech MX Master 3S");
         assertThat(item.getQuantity()).isEqualTo(2);
-        assertThat(item.getUnitPrice()).isEqualByComparingTo("99.90");
+        assertThat(item.getUnitPrice()).isEqualByComparingTo("549.90");
     }
 
     @Test
     void toResponse_includesSubtotalsAndTotalsAndCustomerEmail() {
         Order order = new Order("César", "cesar@email.com");
         order.setId(7L);
-        order.addItem(new OrderItem("Notebook", 1, new BigDecimal("4500.00")));
-        order.addItem(new OrderItem("Mouse", 3, new BigDecimal("100.00")));
+        order.addItem(new OrderItem(1L, "Notebook", 1, new BigDecimal("4500.00")));
+        order.addItem(new OrderItem(2L, "Mouse", 3, new BigDecimal("100.00")));
         order.recalculateTotal();
 
         OrderResponse resp = mapper.toResponse(order);
@@ -40,6 +44,7 @@ class OrderMapperTest {
         assertThat(resp.status()).isEqualTo(OrderStatus.PENDING);
         assertThat(resp.totalAmount()).isEqualByComparingTo("4800.00");
         assertThat(resp.items()).hasSize(2);
+        assertThat(resp.items().get(0).productId()).isEqualTo(1L);
         assertThat(resp.items().get(0).subtotal()).isEqualByComparingTo("4500.00");
         assertThat(resp.confirmedAt()).isNull();
         assertThat(resp.confirmationMethod()).isNull();
@@ -49,7 +54,7 @@ class OrderMapperTest {
     void toResponse_includesConfirmationDataWhenPresent() {
         Order order = new Order("César", "cesar@email.com");
         order.setId(7L);
-        order.addItem(new OrderItem("Item", 1, new BigDecimal("10.00")));
+        order.addItem(new OrderItem(1L, "Item", 1, new BigDecimal("10.00")));
         order.recalculateTotal();
         order.confirm("Admin", "admin@orderflow.com", "ADMIN_MANUAL");
 

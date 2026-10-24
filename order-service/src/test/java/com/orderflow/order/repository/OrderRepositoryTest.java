@@ -6,6 +6,8 @@ import java.util.List;
 import com.orderflow.order.entity.Order;
 import com.orderflow.order.entity.OrderItem;
 import com.orderflow.order.entity.OrderStatus;
+import com.orderflow.order.entity.Product;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -23,10 +25,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OrderRepositoryTest {
 
     @Autowired OrderRepository repo;
+    @Autowired ProductRepository productRepo;
+
+    Product notebook;
+    Product mouse;
+
+    @BeforeEach
+    void setUpProducts() {
+        notebook = productRepo.save(new Product("Notebook", new BigDecimal("4500.00")));
+        mouse = productRepo.save(new Product("Mouse", new BigDecimal("100.00")));
+    }
 
     private Order order(String name, String email, OrderStatus status, String price) {
         Order o = new Order(name, email);
-        o.addItem(new OrderItem("Item", 1, new BigDecimal(price)));
+        o.addItem(new OrderItem(mouse.getId(), "Item", 1, new BigDecimal(price)));
         o.recalculateTotal();
         if (status != OrderStatus.PENDING) o.setStatus(status);
         return o;
@@ -35,13 +47,15 @@ class OrderRepositoryTest {
     @Test
     void saveCascadesItems_andLoadsViaEntityGraph() {
         Order o = new Order("César", "cesar@email.com");
-        o.addItem(new OrderItem("Notebook", 1, new BigDecimal("4500.00")));
-        o.addItem(new OrderItem("Mouse", 2, new BigDecimal("100.00")));
+        o.addItem(new OrderItem(notebook.getId(), "Notebook", 1, new BigDecimal("4500.00")));
+        o.addItem(new OrderItem(mouse.getId(), "Mouse", 2, new BigDecimal("100.00")));
         o.recalculateTotal();
         Long id = repo.save(o).getId();
 
         Order loaded = repo.findById(id).orElseThrow();
         assertThat(loaded.getItems()).hasSize(2);
+        assertThat(loaded.getItems()).extracting(OrderItem::getProductId)
+                .containsExactlyInAnyOrder(notebook.getId(), mouse.getId());
         assertThat(loaded.getCustomerEmail()).isEqualTo("cesar@email.com");
         assertThat(loaded.getTotalAmount()).isEqualByComparingTo("4700.00");
     }

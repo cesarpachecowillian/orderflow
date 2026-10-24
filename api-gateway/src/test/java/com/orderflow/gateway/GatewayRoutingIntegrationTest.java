@@ -58,6 +58,9 @@ class GatewayRoutingIntegrationTest {
         r.add("spring.cloud.gateway.routes[1].id", () -> "order-service");
         r.add("spring.cloud.gateway.routes[1].uri", () -> "http://localhost:18282");
         r.add("spring.cloud.gateway.routes[1].predicates[0]", () -> "Path=/orders/**");
+        r.add("spring.cloud.gateway.routes[2].id", () -> "order-products");
+        r.add("spring.cloud.gateway.routes[2].uri", () -> "http://localhost:18282");
+        r.add("spring.cloud.gateway.routes[2].predicates[0]", () -> "Path=/products/**");
         r.add("jwt.secret", () -> SECRET);
     }
 
@@ -127,5 +130,29 @@ class GatewayRoutingIntegrationTest {
                 .expectStatus().isUnauthorized()
                 .expectHeader().contentType(MediaType.APPLICATION_JSON)
                 .expectBody().jsonPath("$.message").isEqualTo("Token inválido");
+    }
+
+    @Test
+    void productsRoute_noToken_returns401() {
+        client.get().uri("/products").exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void productsRoute_validToken_routesToOrderServiceWithIdentityHeaders() {
+        orderStub.stubFor(get(urlEqualTo("/products"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("[{\"id\":1,\"name\":\"Mouse\",\"price\":10.00}]")));
+
+        client.get().uri("/products")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + validToken())
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$[0].name").isEqualTo("Mouse");
+
+        orderStub.verify(getRequestedFor(urlEqualTo("/products"))
+                .withHeader("X-User-Role", equalTo("USER")));
     }
 }

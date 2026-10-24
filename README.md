@@ -10,6 +10,7 @@ O objetivo do projeto é demonstrar, de ponta a ponta, decisões reais de arquit
 
 - **Cadastro e login** de usuários com senha criptografada (BCrypt) e emissão de JWT.
 - **Papéis `USER` e `ADMIN`**, além de um **super-admin** único que pode promover/rebaixar usuários (e cujo papel não pode ser alterado).
+- **Catálogo de produtos** com preço definido no servidor: o cliente escolhe apenas produto e quantidade, e o pedido guarda um *snapshot* de nome e preço no momento da compra.
 - **Pedidos** com ciclo de vida `PENDING → CONFIRMED` (apenas admin) ou `PENDING → CANCELLED` (dono do pedido ou admin), com auditoria de quem executou cada transição, método e motivo do cancelamento.
 - **Notificações por e-mail** disparadas por eventos Kafka (`ORDER_CREATED`, `ORDER_CONFIRMED`, `ORDER_CANCELLED`), com histórico persistido no MongoDB.
 - **Painel administrativo**: listagem de clientes, resumo de pedidos por usuário e relatório de atividade dos administradores.
@@ -46,7 +47,7 @@ O objetivo do projeto é demonstrar, de ponta a ponta, decisões reais de arquit
 |---|---|---|
 | **api-gateway** | Ponto único de entrada, roteamento declarativo, validação de JWT, agregação do Swagger | — |
 | **auth-service** | Registro, login, emissão de tokens, gestão de usuários e papéis | MySQL |
-| **order-service** | CRUD e transições de pedidos, relatórios, publicação de eventos | MySQL |
+| **order-service** | Catálogo de produtos, CRUD e transições de pedidos, relatórios, publicação de eventos | MySQL |
 | **notification-service** | Consumo de eventos e envio de e-mails (fake em dev, SMTP em `prod`) | MongoDB |
 | **web** | Interface do cliente e do administrador | — |
 
@@ -208,7 +209,8 @@ O Vite faz proxy de `/api/*` para o gateway em `localhost:8080`, então o fluxo 
 | `POST` | `/auth/login` | Público |
 | `GET` | `/auth/users` · `/auth/users/{id}` | Admin |
 | `PATCH` | `/auth/users/{id}/role` | Super-admin |
-| `POST` | `/orders` | Autenticado |
+| `GET` | `/products` | Autenticado |
+| `POST` | `/orders` (`items: [{ productId, quantity }]`) | Autenticado |
 | `GET` | `/orders` · `/orders/{id}` | Dono ou admin |
 | `PATCH` | `/orders/{id}/cancel` | Dono ou admin |
 | `PATCH` | `/orders/{id}/confirm` | Admin |
@@ -263,6 +265,11 @@ orderflow/
 
 Este é um projeto de demonstração e algumas simplificações foram feitas de propósito. Abaixo estão as limitações que existem hoje no código, por que elas importam e como poderiam ser resolvidas.
 
+### Já corrigido
+
+- **Autorização de cancelamento pelo nome do cliente.** O dono do pedido era identificado pelo nome, que não é único: dois clientes chamados "Maria Silva" conseguiam cancelar os pedidos um do outro. Agora o dono é identificado pelo e-mail em todos os endpoints, e um e-mail ausente nunca é tratado como dono. Há testes cobrindo nomes iguais com e-mails diferentes e e-mail nulo.
+- **Preço definido pelo cliente.** O `POST /orders` aceitava `unitPrice` no corpo da requisição, então qualquer usuário podia comprar pelo preço que quisesse. Agora existe um catálogo (`products`), o pedido envia apenas `productId` e `quantity`, e nome e preço são copiados do catálogo no servidor. Um teste de integração envia `unitPrice: 0.01` e confirma que o campo é ignorado.
+
 ### Consistência e mensageria
 
 **1. Publicação de eventos sem Transactional Outbox**
@@ -291,49 +298,41 @@ A entidade `Order` não tem `@Version`. Dois administradores confirmando e cance
 A autorização nos serviços se baseia em `X-User-Role`, `X-User-Email` etc. A proteção é apenas de rede (`expose` em vez de `ports`). Qualquer processo que consiga falar com `order-service` dentro da rede pode forjar `X-User-Role: ADMIN`.
 *Por que mudar:* numa abordagem *zero trust*, cada serviço validaria o próprio JWT (ou um token interno assinado pelo Gateway) ou usaria mTLS entre serviços, para que comprometer um container não dê acesso a todos os outros.
 
-**7. Verificação de dono no cancelamento usa o nome, não o e-mail**
-Em `OrderService.cancel`, o dono é verificado comparando `customerName` com o nome do usuário logado. Nomes não são únicos: dois clientes chamados "Maria Silva" conseguem cancelar os pedidos um do outro. A consulta de detalhe (`findById`) já usa o e-mail corretamente.
-*Por que mudar:* comparar pelo identificador único (e-mail ou, idealmente, o ID do usuário no JWT) fecha essa brecha de autorização e deixa a regra igual em todos os endpoints.
-
-**8. Preço do item definido pelo cliente**
-O `CreateOrderItemRequest` recebe `unitPrice` direto do frontend, e o total do pedido é calculado a partir dele. Um usuário pode enviar qualquer preço via API.
-*Por que mudar:* um catálogo de produtos (novo serviço ou tabela) sendo a fonte do preço, com o pedido enviando só `productId` e `quantity`, é o comportamento esperado de um e-commerce real.
-
-**9. Token JWT no `localStorage` e sem revogação**
+**7. Token JWT no `localStorage` e sem revogação**
 O frontend guarda o token no `localStorage`, que fica acessível a qualquer script da página em caso de XSS. O token vale 24h, não existe refresh token, e o logout ou uma mudança de papel não invalida tokens já emitidos.
 *Por que mudar:* access token curto, refresh token em cookie `HttpOnly` + `Secure` + `SameSite` e uma lista de revogação (ex.: Redis) limitam o estrago de um token vazado e fazem a mudança de papel valer na hora.
 
-**10. CORS totalmente aberto**
+**8. CORS totalmente aberto**
 O Gateway aceita qualquer origem (`allowedOriginPatterns("*")`) com `allowCredentials(true)`.
 *Por que mudar:* restringir às origens conhecidas do frontend evita que outros sites façam requisições autenticadas em nome do usuário.
 
-**11. Sem proteção contra força bruta no login**
+**9. Sem proteção contra força bruta no login**
 `/auth/login` não tem limite de tentativas nem bloqueio temporário.
 *Por que mudar:* rate limiting no Gateway (o Spring Cloud Gateway já tem `RequestRateLimiter` com Redis) e bloqueio progressivo por conta dificultam ataques de dicionário.
 
-**12. Segredos com valores padrão no código**
+**10. Segredos com valores padrão no código**
 Os `application.yml` têm *fallbacks* para `JWT_SECRET` e senhas de banco, e o seed cria `admin@orderflow.com` / `admin123`. Isso facilita rodar a demo, mas se uma variável de ambiente for esquecida em produção, o sistema sobe silenciosamente com segredos públicos.
 *Por que mudar:* em produção a aplicação deveria falhar ao iniciar sem os segredos, que viriam de um cofre (AWS Secrets Manager, Vault), e o admin inicial deveria ser criado com senha gerada e troca obrigatória no primeiro acesso.
 
 ### Operação e infraestrutura
 
-**13. Schema sem migrations versionadas**
+**11. Schema sem migrations versionadas**
 O schema é criado por scripts em `docker-entrypoint-initdb.d`, que só rodam com o volume vazio. Qualquer mudança exige `docker compose down -v`, o que apaga todos os dados.
 *Por que mudar:* Flyway ou Liquibase aplicam alterações incrementais e versionadas no startup, sem perder dados, e mantêm o histórico do schema junto com o código.
 
-**14. Pouca observabilidade**
+**12. Pouca observabilidade**
 Não há tracing distribuído nem métricas centralizadas. Seguir um pedido do Gateway até o e-mail exige olhar os logs de quatro containers separadamente.
 *Por que mudar:* Micrometer + OpenTelemetry (traces com o ID propagado inclusive pelo Kafka), Prometheus/Grafana para métricas e logs estruturados com *correlation id* tornam a depuração de um sistema distribuído viável.
 
-**15. Sem resiliência entre Gateway e serviços**
+**13. Sem resiliência entre Gateway e serviços**
 Se `auth-service` ou `order-service` ficar lento, o Gateway espera indefinidamente e acumula conexões.
 *Por que mudar:* timeouts, *circuit breaker* e *fallback* com Resilience4j impedem que a lentidão de um serviço derrube o sistema inteiro.
 
-**16. Infraestrutura de desenvolvimento**
+**14. Infraestrutura de desenvolvimento**
 O Kafka depende do Zookeeper (já descontinuado nas versões novas, que usam KRaft), o `kafka-ui` usa a tag `latest` (builds não reproduzíveis) e tudo roda em um único host com Docker Compose.
 *Por que mudar:* migrar para KRaft, fixar versões de imagem e ter manifests Kubernetes (ou Helm) aproximam o ambiente do que seria usado em produção, com escala horizontal e *self-healing*.
 
-**17. Sem pipeline de integração contínua**
+**15. Sem pipeline de integração contínua**
 Os testes existem, mas rodam só manualmente.
 *Por que mudar:* um pipeline (GitHub Actions, por exemplo) rodando build, testes e análise estática (SonarQube) a cada push evita regressões e documenta a saúde do projeto.
 

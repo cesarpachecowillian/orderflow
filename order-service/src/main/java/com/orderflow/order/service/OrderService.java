@@ -2,6 +2,7 @@ package com.orderflow.order.service;
 
 import com.orderflow.order.dto.AdminActivityRow;
 import com.orderflow.order.dto.AdminActivitySummary;
+import com.orderflow.order.dto.CreateOrderItemRequest;
 import com.orderflow.order.dto.CreateOrderRequest;
 import com.orderflow.order.dto.OrderEventDTO;
 import com.orderflow.order.dto.OrderResponse;
@@ -9,12 +10,15 @@ import com.orderflow.order.dto.OrderSummary;
 import com.orderflow.order.dto.UserOrdersSummary;
 import com.orderflow.order.entity.Order;
 import com.orderflow.order.entity.OrderStatus;
+import com.orderflow.order.entity.Product;
 import com.orderflow.order.exception.OrderNotCancellableException;
 import com.orderflow.order.exception.OrderNotConfirmableException;
 import com.orderflow.order.exception.OrderNotFoundException;
+import com.orderflow.order.exception.ProductNotFoundException;
 import com.orderflow.order.exception.UnauthorizedAccessException;
 import com.orderflow.order.mapper.OrderMapper;
 import com.orderflow.order.repository.OrderRepository;
+import com.orderflow.order.repository.ProductRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -24,6 +28,8 @@ import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
@@ -37,17 +43,31 @@ public class OrderService {
     private final OrderRepository repository;
     private final OrderMapper mapper;
     private final OrderEventPublisher publisher;
+    private final ProductRepository productRepository;
 
-    public OrderService(OrderRepository repository, OrderMapper mapper, OrderEventPublisher publisher) {
+    public OrderService(OrderRepository repository, OrderMapper mapper, OrderEventPublisher publisher,
+                        ProductRepository productRepository) {
         this.repository = repository;
+        this.productRepository = productRepository;
         this.mapper = mapper;
         this.publisher = publisher;
     }
 
     @Transactional
     public OrderResponse create(String userName, String userEmail, CreateOrderRequest request) {
+        // Preço e nome vêm do catálogo (uma única consulta); o cliente só escolhe produto e quantidade.
+        List<Long> ids = request.items().stream().map(CreateOrderItemRequest::productId).distinct().toList();
+        Map<Long, Product> products = productRepository.findAllByIdInAndActiveTrue(ids).stream()
+                .collect(Collectors.toMap(Product::getId, Function.identity()));
+
         Order order = new Order(userName, userEmail);
-        request.items().forEach(item -> order.addItem(mapper.toEntity(item)));
+        for (CreateOrderItemRequest item : request.items()) {
+            Product product = products.get(item.productId());
+            if (product == null) {
+                throw new ProductNotFoundException(item.productId());
+            }
+            order.addItem(mapper.toEntity(product, item.quantity()));
+        }
         order.recalculateTotal();
         Order saved = repository.save(order);
 
@@ -128,10 +148,18 @@ public class OrderService {
     public OrderResponse findById(Long id, String userEmail, boolean isAdmin) {
         Order order = repository.findById(id)
                 .orElseThrow(() -> new OrderNotFoundException(id));
-        if (!isAdmin && !userEmail.equals(order.getCustomerEmail())) {
+        if (!isAdmin && !isOwner(order, userEmail)) {
             throw new UnauthorizedAccessException();
         }
         return mapper.toResponse(order);
+    }
+
+    /**
+     * Dono do pedido é identificado pelo e-mail (único), nunca pelo nome.
+     * E-mail nulo/vazio nunca é considerado dono, evitando null == null.
+     */
+    private static boolean isOwner(Order order, String userEmail) {
+        return userEmail != null && !userEmail.isBlank() && userEmail.equals(order.getCustomerEmail());
     }
 
     @Transactional
@@ -164,7 +192,7 @@ public class OrderService {
         Order order = repository.findById(id)
                 .orElseThrow(() -> new OrderNotFoundException(id));
 
-        if (!isAdmin && !order.getCustomerName().equals(userName)) {
+        if (!isAdmin && !isOwner(order, userEmail)) {
             throw new UnauthorizedAccessException();
         }
         if (!order.isCancellable()) {

@@ -10,3 +10,7 @@ spring:
           uri: http://order-service:8082
           predicates:
             - Path=/orders/**
+        - id: order-products
+          uri: http://order-service:8082
+          predicates:
+            - Path=/products/**

@@ -18,6 +18,10 @@ spring:
           uri: http://localhost:8082
           predicates:
             - Path=/orders/**
+        - id: order-products
+          uri: http://localhost:8082
+          predicates:
+            - Path=/products/**
 
 jwt:
   secret: ${JWT_SECRET:orderflow-super-secret-key-2026-must-be-at-least-256-bits-long}
