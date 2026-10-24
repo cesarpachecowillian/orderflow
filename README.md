@@ -265,11 +265,6 @@ orderflow/
 
 Este é um projeto de demonstração e algumas simplificações foram feitas de propósito. Abaixo estão as limitações que existem hoje no código, por que elas importam e como poderiam ser resolvidas.
 
-### Já corrigido
-
-- **Autorização de cancelamento pelo nome do cliente.** O dono do pedido era identificado pelo nome, que não é único: dois clientes chamados "Maria Silva" conseguiam cancelar os pedidos um do outro. Agora o dono é identificado pelo e-mail em todos os endpoints, e um e-mail ausente nunca é tratado como dono. Há testes cobrindo nomes iguais com e-mails diferentes e e-mail nulo.
-- **Preço definido pelo cliente.** O `POST /orders` aceitava `unitPrice` no corpo da requisição, então qualquer usuário podia comprar pelo preço que quisesse. Agora existe um catálogo (`products`), o pedido envia apenas `productId` e `quantity`, e nome e preço são copiados do catálogo no servidor. Um teste de integração envia `unitPrice: 0.01` e confirma que o campo é ignorado.
-
 ### Consistência e mensageria
 
 **1. Publicação de eventos sem Transactional Outbox**
